@@ -1,0 +1,7 @@
+{
+  "name": "GastroMaster AI",
+  "description": "Premium Restaurant Management System with AI-powered invoice scanning, POS, and HACCP hygiene tracking.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
