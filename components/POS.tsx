@@ -349,17 +349,20 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
 
         sessionOrders.forEach(o => {
             total += Number(o.total || 0);
-            if (o.payments) {
+            if (o.payments && Array.isArray(o.payments)) {
                 o.payments.forEach(p => {
-                    const method = (p.method || 'cash') as string;
-                    // FIX: Ensure 'payBreakdown[method]' is treated as a number
-                    const current = payBreakdown[method] || 0;
-                    payBreakdown[method] = current + Number(p.amount || 0);
+                    const method = String(p.method || 'cash');
+                    // FIX: Ensure types are number
+                    const amount = Number(p.amount || 0);
+                    const current = Number(payBreakdown[method] || 0);
+                    payBreakdown[method] = current + amount;
                 });
             }
-            if (o.items) {
+            if (o.items && Array.isArray(o.items)) {
                 o.items.forEach(i => {
-                    if (!productBreakdown[i.name]) productBreakdown[i.name] = { qty: 0, totalTTC: 0, totalHT: 0, totalVAT: 0 };
+                    if (!productBreakdown[i.name]) {
+                        productBreakdown[i.name] = { qty: 0, totalTTC: 0, totalHT: 0, totalVAT: 0 };
+                    }
                     
                     const tRate = Number(i.taxRate ?? settings.defaultTax ?? 0);
                     const price = Number(i.price ?? 0);
@@ -370,15 +373,19 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
                     const lineVAT = lineTTC - lineHT;
                     
                     const entry = productBreakdown[i.name];
-                    entry.qty += qty;
-                    entry.totalTTC += lineTTC;
-                    entry.totalHT += lineHT;
-                    entry.totalVAT += lineVAT;
+                    if (entry) {
+                        entry.qty += qty;
+                        entry.totalTTC += lineTTC;
+                        entry.totalHT += lineHT;
+                        entry.totalVAT += lineVAT;
+                    }
                     
                     if(!taxBreakdown[tRate]) taxBreakdown[tRate] = { base: 0, amount: 0 };
                     const taxEntry = taxBreakdown[tRate];
-                    taxEntry.base += lineHT;
-                    taxEntry.amount += lineVAT;
+                    if (taxEntry) {
+                        taxEntry.base += lineHT;
+                        taxEntry.amount += lineVAT;
+                    }
                 });
             }
         });
