@@ -360,8 +360,9 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
             }
             if (o.items && Array.isArray(o.items)) {
                 o.items.forEach(i => {
-                    if (!productBreakdown[i.name]) {
-                        productBreakdown[i.name] = { qty: 0, totalTTC: 0, totalHT: 0, totalVAT: 0 };
+                    const iName = String(i.name);
+                    if (!productBreakdown[iName]) {
+                        productBreakdown[iName] = { qty: 0, totalTTC: 0, totalHT: 0, totalVAT: 0 };
                     }
                     
                     const tRate = Number(i.taxRate ?? settings.defaultTax ?? 0);
@@ -369,10 +370,11 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
                     const qty = Number(i.qty ?? 0);
 
                     const lineTTC = price * qty;
-                    const lineHT = lineTTC / (1 + (tRate / 100));
+                    // Fix arithmetic error by explicit number casting
+                    const lineHT = Number(lineTTC) / Number(1 + (tRate / 100));
                     const lineVAT = lineTTC - lineHT;
                     
-                    const entry = productBreakdown[i.name];
+                    const entry = productBreakdown[iName];
                     if (entry) {
                         entry.qty += qty;
                         entry.totalTTC += lineTTC;
@@ -380,8 +382,9 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
                         entry.totalVAT += lineVAT;
                     }
                     
-                    if(!taxBreakdown[tRate]) taxBreakdown[tRate] = { base: 0, amount: 0 };
-                    const taxEntry = taxBreakdown[tRate];
+                    const rateKey = Number(tRate);
+                    if(!taxBreakdown[rateKey]) taxBreakdown[rateKey] = { base: 0, amount: 0 };
+                    const taxEntry = taxBreakdown[rateKey];
                     if (taxEntry) {
                         taxEntry.base += lineHT;
                         taxEntry.amount += lineVAT;

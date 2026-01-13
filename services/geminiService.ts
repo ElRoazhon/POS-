@@ -1,10 +1,17 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { InvoiceItemCandidate } from "../types";
 
-// NOTE: In a real production app, API keys should not be hardcoded on the client.
-// However, per instructions, we rely on process.env.API_KEY injected by the environment.
+// NOTE: We do not initialize the client at the top level anymore.
+// This prevents the "Blue Screen" crash if process.env.API_KEY is undefined on load.
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAiClient = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    console.warn("API Key is missing in process.env");
+    throw new Error("API Key is missing. Please configure 'API_KEY' in your environment variables.");
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 const invoiceSchema: Schema = {
   type: Type.OBJECT,
@@ -31,11 +38,14 @@ const invoiceSchema: Schema = {
 
 export const analyzeInvoiceImage = async (base64Image: string): Promise<{ items: InvoiceItemCandidate[], total?: number, date?: string, supplier?: string }> => {
   try {
+    // Initialize client here, safely
+    const ai = getAiClient();
+
     // Remove header if present
     const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, "");
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview', // Updated to 3-flash for multimodal analysis + schema support
+      model: 'gemini-3-flash-preview', 
       contents: {
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
@@ -57,7 +67,8 @@ export const analyzeInvoiceImage = async (base64Image: string): Promise<{ items:
 
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
-    throw new Error("Failed to analyze image with AI.");
+    // Return empty result instead of crashing the UI
+    return { items: [] };
   }
 };
 
@@ -73,6 +84,7 @@ const labelSchema: Schema = {
 
 export const analyzeTraceabilityLabel = async (base64Image: string) => {
     try {
+        const ai = getAiClient();
         const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, "");
     
         const response = await ai.models.generateContent({
