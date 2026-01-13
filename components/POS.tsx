@@ -83,7 +83,7 @@ const PaymentModal: React.FC<{
       if (mode === 'items') {
           let sum = 0;
           order.items.forEach((item, idx) => {
-             const qty = selectedItems[idx] || 0;
+             const qty = Number(selectedItems[idx] || 0);
              sum += qty * item.price;
           });
           return sum;
@@ -318,18 +318,19 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
         const snap = await getDocs(q);
         const allPaidOrders = snap.docs.map(d => d.data() as Order);
 
+        const getTimestampSeconds = (t: any): number => {
+            if (!t) return 0;
+            if (typeof t.seconds === 'number') return t.seconds;
+            if (typeof t._seconds === 'number') return t._seconds;
+            try {
+                if (t instanceof Timestamp) return t.seconds;
+            } catch(e) {}
+            return 0;
+        };
+
         const sessionOrders = allPaidOrders.filter(o => {
             if (o.sessionId === session.id) return true;
             
-            // Safe timestamp comparison
-            const getTimestampSeconds = (t: any): number => {
-                if (!t) return 0;
-                if (typeof t.seconds === 'number') return t.seconds;
-                if (typeof t._seconds === 'number') return t._seconds;
-                if (t instanceof Timestamp) return t.seconds;
-                return 0;
-            };
-
             const sOpen = session.openedAt;
             const oUpdate = o.updatedAt;
 
@@ -347,34 +348,37 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
         const taxBreakdown: Record<number, { base: number, amount: number }> = {};
 
         sessionOrders.forEach(o => {
-            total += (o.total || 0);
+            total += Number(o.total || 0);
             if (o.payments) {
                 o.payments.forEach(p => {
-                    const method = p.method || 'cash';
-                    if (!payBreakdown[method]) payBreakdown[method] = 0;
-                    payBreakdown[method] += (p.amount || 0);
+                    const method = (p.method || 'cash') as string;
+                    // FIX: Ensure 'payBreakdown[method]' is treated as a number
+                    const current = payBreakdown[method] || 0;
+                    payBreakdown[method] = current + Number(p.amount || 0);
                 });
             }
             if (o.items) {
                 o.items.forEach(i => {
                     if (!productBreakdown[i.name]) productBreakdown[i.name] = { qty: 0, totalTTC: 0, totalHT: 0, totalVAT: 0 };
                     
-                    const tRate = (typeof i.taxRate === 'number' ? i.taxRate : settings.defaultTax) || 0;
-                    const price = i.price || 0;
-                    const qty = i.qty || 0;
+                    const tRate = Number(i.taxRate ?? settings.defaultTax ?? 0);
+                    const price = Number(i.price ?? 0);
+                    const qty = Number(i.qty ?? 0);
 
                     const lineTTC = price * qty;
                     const lineHT = lineTTC / (1 + (tRate / 100));
                     const lineVAT = lineTTC - lineHT;
                     
-                    productBreakdown[i.name].qty += qty;
-                    productBreakdown[i.name].totalTTC += lineTTC;
-                    productBreakdown[i.name].totalHT += lineHT;
-                    productBreakdown[i.name].totalVAT += lineVAT;
+                    const entry = productBreakdown[i.name];
+                    entry.qty += qty;
+                    entry.totalTTC += lineTTC;
+                    entry.totalHT += lineHT;
+                    entry.totalVAT += lineVAT;
                     
                     if(!taxBreakdown[tRate]) taxBreakdown[tRate] = { base: 0, amount: 0 };
-                    taxBreakdown[tRate].base += lineHT;
-                    taxBreakdown[tRate].amount += lineVAT;
+                    const taxEntry = taxBreakdown[tRate];
+                    taxEntry.base += lineHT;
+                    taxEntry.amount += lineVAT;
                 });
             }
         });
@@ -428,8 +432,7 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
 
   const cancelTable = async () => {
       if (!currentOrder || !currentOrder.id) return;
-      if (!window.confirm("⚠️ ATTENTION : Voulez-vous vraiment ANNULER cette table et tout effacer ?\n\nCette action est irréversible.")) return;
-      
+      // Removed confirm dialog as requested
       try {
           await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'orders', currentOrder.id));
           setCurrentOrder(null);
@@ -529,10 +532,16 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
 
   const saveOrderLocal = (items: OrderItem[], payments: Payment[]) => {
     let sub = 0;
-    items.forEach(i => sub += i.price * i.qty);
-    const totalPaid = payments.reduce((acc, p) => acc + p.amount, 0);
+    items.forEach(i => sub += Number(i.price ?? 0) * Number(i.qty ?? 0));
+    const totalPaid = payments.reduce((acc, p) => acc + Number(p.amount ?? 0), 0);
     let tax = 0;
-    items.forEach(i => { const line = i.price * i.qty; tax += line - (line / (1 + i.taxRate/100)); });
+    items.forEach(i => { 
+        const p = Number(i.price ?? 0);
+        const q = Number(i.qty ?? 0);
+        const tr = Number(i.taxRate ?? 0);
+        const line = p * q; 
+        tax += line - (line / (1 + tr/100)); 
+    });
     setCurrentOrder(prev => prev ? ({ ...prev, items, payments, subtotal: sub, taxTotal: tax, total: sub, paidAmount: totalPaid }) : null);
   };
 
@@ -557,10 +566,10 @@ export const POS: React.FC<{ onBack: () => void; user: any }> = ({ onBack, user 
       // Update item paid counts if specific items were paid
       const newItems = currentOrder.items.map(item => {
           const payItem = itemsToPay.find(pi => pi.id === item.id && pi.price === item.price);
-          return payItem ? { ...item, paid: item.paid + (payItem.payQty || 0) } : item;
+          return payItem ? { ...item, paid: item.paid + Number(payItem.payQty || 0) } : item;
       });
 
-      const newTotalPaid = newPayments.reduce((a, b) => a + b.amount, 0);
+      const newTotalPaid = newPayments.reduce((a, b) => a + Number(b.amount || 0), 0);
       const isFullyPaid = newTotalPaid >= currentOrder.total - 0.01;
 
       const updatedOrder: Order = { ...currentOrder, items: newItems, payments: newPayments, paidAmount: newTotalPaid, status: isFullyPaid ? 'paid' : 'open', updatedAt: Timestamp.now() };

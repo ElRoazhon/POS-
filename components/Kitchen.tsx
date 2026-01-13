@@ -51,31 +51,40 @@ export const Kitchen: React.FC<KitchenProps> = ({ onBack }) => {
         return dest === viewMode;
     };
 
-    // LOGIC:
-    // 1. Filter orders that have at least one item relevant to this view.
-    // 2. Split into "Cooking" (Active) and "History/Waiting" (Idle).
-    //    - Cooking: Has at least one course in 'fired' status.
-    //    - History: Has items but NO 'fired' courses (either all served or waiting).
+    // --- LOGIC: STRICT STATE MACHINE (Prevents Duplicates) ---
+    // State 'active':  At least one relevant course is 'fired' (Cooking).
+    // State 'waiting': No 'fired' courses, but has at least one relevant course NOT 'served' (Hold).
+    // State 'done':    All relevant courses are 'served'. (Disappears from main screens).
 
-    const relevantOrders = orders.filter(o => o.items.some(i => isItemForView(i)));
+    const getOrderState = (o: Order): 'active' | 'waiting' | 'done' => {
+        const relevantCourses = [1,2,3,4,5].filter(c => 
+            o.items.some(i => (i.course||1) === c && isItemForView(i))
+        );
 
-    const activeOrders = relevantOrders.filter(o => {
-        // Is there any course that is currently FIRED?
-        return [1,2,3,4,5].some(c => {
-             const hasItems = o.items.some(i => (i.course||1) === c && isItemForView(i));
-             if (!hasItems) return false;
-             return o.kitchenStatus?.[c] === 'fired';
-        });
-    });
+        // If no relevant courses for this view, it's effectively done/invisible
+        if (relevantCourses.length === 0) return 'done';
 
-    const waitingOrders = relevantOrders.filter(o => {
-        // Is there NO course currently FIRED?
-        const hasFired = [1,2,3,4,5].some(c => {
-             const hasItems = o.items.some(i => (i.course||1) === c && isItemForView(i));
-             if (!hasItems) return false;
-             return o.kitchenStatus?.[c] === 'fired';
-        });
-        return !hasFired;
+        // 1. Check for Active (Fired)
+        const hasFired = relevantCourses.some(c => o.kitchenStatus?.[c] === 'fired');
+        if (hasFired) return 'active';
+
+        // 2. Check for Pending (Not Served)
+        // If it's not fired, and not served, it's waiting (or 'hold')
+        const hasPending = relevantCourses.some(c => o.kitchenStatus?.[c] !== 'served');
+        if (hasPending) return 'waiting';
+
+        // 3. Otherwise, everything is served
+        return 'done';
+    };
+
+    const activeOrders = orders.filter(o => getOrderState(o) === 'active');
+    const waitingOrders = orders.filter(o => getOrderState(o) === 'waiting');
+    
+    // For the "Tout voir" modal, we show 'waiting' AND 'done' orders (excluding active cooking ones)
+    // allowing the chef to review history or fix a mistake.
+    const historyModalOrders = orders.filter(o => {
+        const s = getOrderState(o);
+        return s === 'waiting' || s === 'done';
     });
 
     return (
@@ -117,8 +126,6 @@ export const Kitchen: React.FC<KitchenProps> = ({ onBack }) => {
                         const courses = [1,2,3,4,5].filter(c => {
                             return viewItems.some(i => (i.course||1) === c);
                         });
-
-                        if (courses.length === 0) return null;
 
                         return (
                             <div key={order.id} className="bg-slate-900 border-2 border-slate-700 rounded-xl overflow-hidden shadow-lg flex flex-col hover:border-indigo-500 transition-all h-fit">
@@ -183,28 +190,27 @@ export const Kitchen: React.FC<KitchenProps> = ({ onBack }) => {
                 </div>
             </div>
 
-            {/* BOTTOM WAITING QUEUE (History / Pending) */}
+            {/* BOTTOM WAITING QUEUE (Waiting State Only) */}
             <div className="h-40 bg-slate-900 border-t border-slate-800 shrink-0 flex flex-col shadow-[0_-5px_20px_rgba(0,0,0,0.5)] z-10">
                 <div className="px-4 py-1 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
                     <span className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                        <Clock size={12} /> Historique / En attente
+                        <Clock size={12} /> Prochains envois (En attente)
                     </span>
                     <div className="flex gap-4 items-center">
                         <span className="text-xs font-mono text-slate-600">{waitingOrders.length} commandes</span>
                         <button onClick={() => setShowHistoryModal(true)} className="flex items-center gap-1 text-[10px] uppercase font-bold bg-slate-800 hover:bg-indigo-600 px-3 py-1 rounded transition-colors text-slate-300 hover:text-white border border-slate-700">
-                            <List size={12} /> Tout voir
+                            <List size={12} /> Tout voir (Historique)
                         </button>
                     </div>
                 </div>
                 <div className="flex-1 overflow-x-auto p-2 flex gap-2 items-start custom-scrollbar">
-                     {waitingOrders.length === 0 && <div className="w-full h-full flex items-center justify-center text-slate-700 text-sm italic">Aucune commande en attente</div>}
+                     {waitingOrders.length === 0 && <div className="w-full h-full flex items-center justify-center text-slate-700 text-sm italic">Aucune suite en attente</div>}
                      
                      {waitingOrders.map(order => {
                          // Find highest served course to show context
                          let lastServed = 0;
                          if (order.kitchenStatus) Object.entries(order.kitchenStatus).forEach(([k,v]) => { if(v==='served') lastServed = Math.max(lastServed, parseInt(k)); });
                          
-                         // Determine items to show preview
                          const viewItems = order.items.filter(i => isItemForView(i));
                          
                          return (
@@ -234,18 +240,19 @@ export const Kitchen: React.FC<KitchenProps> = ({ onBack }) => {
                 </div>
             </div>
 
-            {/* FULL HISTORY MODAL */}
-            <Modal isOpen={showHistoryModal} onClose={() => setShowHistoryModal(false)} title="Historique de Service (Commandes envoyées)" maxWidth="max-w-4xl">
+            {/* FULL HISTORY MODAL (Waiting + Done) */}
+            <Modal isOpen={showHistoryModal} onClose={() => setShowHistoryModal(false)} title="Historique Complet (En attente + Terminés)" maxWidth="max-w-4xl">
                 <div className="space-y-4">
-                    {waitingOrders.length === 0 && <div className="text-center text-slate-500 py-10">Aucune commande dans l'historique actif.</div>}
+                    {historyModalOrders.length === 0 && <div className="text-center text-slate-500 py-10">Aucune commande disponible.</div>}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {waitingOrders.map(order => {
+                        {historyModalOrders.map(order => {
                             let lastServed = 0;
                             if (order.kitchenStatus) Object.entries(order.kitchenStatus).forEach(([k,v]) => { if(v==='served') lastServed = Math.max(lastServed, parseInt(k)); });
                             const viewItems = order.items.filter(i => isItemForView(i));
+                            const isDone = getOrderState(order) === 'done';
 
                             return (
-                                <div key={order.id} className="bg-slate-950 border border-slate-800 p-4 rounded-xl">
+                                <div key={order.id} className={`bg-slate-950 border p-4 rounded-xl ${isDone ? 'border-slate-800 opacity-60' : 'border-indigo-900/50'}`}>
                                     <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-2">
                                         <span className="font-bold text-white text-lg">Table {getTableName(order.tableId)}</span>
                                         <span className="text-xs text-slate-500">{new Date(order.updatedAt?.seconds * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
@@ -259,11 +266,12 @@ export const Kitchen: React.FC<KitchenProps> = ({ onBack }) => {
                                         ))}
                                     </div>
                                     <div className="flex justify-between items-center pt-2 border-t border-slate-800">
-                                        <span className="text-xs font-bold text-emerald-500 uppercase">
-                                            {lastServed > 0 ? `Dernier envoi : Service ${lastServed}` : 'En attente de démarrage'}
+                                        <span className={`text-xs font-bold uppercase ${isDone ? 'text-slate-500' : 'text-indigo-400'}`}>
+                                            {isDone ? 'Service Terminé' : `Dernier envoi : Service ${lastServed}`}
                                         </span>
+                                        {/* Allow recall for safety */}
                                         <Button variant="outline" className="py-1 px-3 text-xs h-8" onClick={() => updateStatus(order, lastServed || 1, 'fired')}>
-                                            <Undo2 size={12} className="mr-1"/> Rappeler
+                                            <Undo2 size={12} className="mr-1"/> {isDone ? 'Rouvrir' : 'Rappeler'}
                                         </Button>
                                     </div>
                                 </div>
